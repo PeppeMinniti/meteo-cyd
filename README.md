@@ -51,8 +51,6 @@ Display e sensore si fissano con **viti M2 × 5 mm**.
 📥 **Modello 3D su MakerWorld** (CC BY 4.0):
 https://makerworld.com/en/models/3038452-weather-station-case-cyd-esp32-2432s028-bme280
 
-Testi del listing in `cad/MAKERWORLD_LISTING.md`.
-
 ## Roadmap
 - Pilotaggio di **attuatori esterni** (ventilatore, luce) via relè/MOSFET.
 - **Automazioni a soglia** su temperatura e luce, con comando manuale dal touchscreen.

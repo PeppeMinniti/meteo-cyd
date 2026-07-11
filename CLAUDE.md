@@ -111,8 +111,8 @@ da caricare nella stessa cartella di `insert.php`:
   Display e sensore BME280 si fissano con **viti M2 × 5 mm** (non a incastro).
 - Profilo di stampa nel 3mf: **Bambu Lab A1 mini**, PETG (PLA ok), ugello 0.4,
   layer 0.2, infill 15%, piatto PEI Testurizzato, supporti ad albero auto, brim auto.
-- Testi del listing MakerWorld (bilingue IT+EN, licenza CC BY 4.0) in
-  `cad/MAKERWORLD_LISTING.md`.
+- Modello pubblicato su MakerWorld (licenza CC BY 4.0):
+  https://makerworld.com/en/models/3038452-weather-station-case-cyd-esp32-2432s028-bme280
 
 ## Roadmap / Espansioni future
 - Pilotare **attuatori esterni** (ventilatore, luce) via relè/MOSFET dalla stessa
