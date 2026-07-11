@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<!--
+  ============================================================================
+   index.html - Dashboard web della centralina meteo (pagina /meteo/).
+   File commentato a scopo didattico.
+
+   COSA FA QUESTA PAGINA
+   --------------------------------------------------------------------------
+   Mostra i dati registrati dall'ESP32: i valori attuali (card in alto) e
+   quattro grafici dell'andamento nel tempo (temperatura, umidita',
+   pressione, luce). I dati NON sono dentro questa pagina: vengono chiesti a
+   data.php, che li legge dal database e li restituisce in JSON.
+
+   COME E' FATTA (le 3 tecnologie del web)
+   --------------------------------------------------------------------------
+   - HTML  = la STRUTTURA (titoli, card, contenitori dei grafici). E' qui
+             sotto, nel <body>.
+   - CSS   = l'ASPETTO (colori, spaziature, griglia, modalita' a tutta
+             pagina). E' nel blocco <style>.
+   - JS    = il COMPORTAMENTO (scarica i dati, disegna i grafici, gestisce i
+             click). E' nel blocco <script> in fondo.
+
+   CONCETTI CHIAVE
+   --------------------------------------------------------------------------
+   1) fetch() + async/await: il JavaScript chiede l'URL data.php e ASPETTA la
+      risposta senza bloccare la pagina; poi la converte da JSON a oggetti JS.
+   2) Chart.js: libreria (caricata da CDN) che disegna i grafici su un
+      elemento <canvas>. Le passiamo i punti {x: data, y: valore}.
+   3) Variabili CSS (--temp, --hum...): definiamo i colori una volta sola in
+      :root e li riusiamo sia nel CSS sia nel JS (cosi' tinta card = tinta
+      grafico). Comodo per cambiare tema in un punto solo.
+   4) Auto-refresh: ogni minuto la pagina richiama data.php, come la cadenza
+      con cui l'ESP32 scrive una nuova misura.
+  ============================================================================
+-->
+<html lang="it">
+<head>
+  <meta charset="utf-8">                                       <!-- set di caratteri: accenti, simboli -->
+  <meta name="viewport" content="width=device-width, initial-scale=1"> <!-- resa corretta su mobile -->
+  <title>Centralina Meteo</title>                                <!-- titolo nella scheda del browser -->
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">     <!-- icona della scheda (sole/nuvola/pioggia/fulmine) -->
+
+  <!-- Librerie esterne caricate da CDN (serve connessione internet nel browser):
+       - luxon: gestione di date/orari
+       - chart.js: i grafici
+       - chartjs-adapter-luxon: fa parlare Chart.js con luxon per l'asse tempo -->
+  <script src="https://cdn.jsdelivr.net/npm/luxon@3/build/global/luxon.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon@1/dist/chartjs-adapter-luxon.umd.min.js"></script>
+
+  <style>
+    /* :root = variabili globali del tema. Cambiando qui cambia tutta la pagina. */
+    :root {
+      --bg:#0f1419; --card:#1a2230; --ink:#e8eef6; --muted:#8aa0b8; /* sfondo, card, testo, testo tenue */
+      --temp:#ff6b5e; --hum:#4fc3f7; --pres:#b388ff; --luce:#ffd54f; /* un colore per ogni misura */
+      --grid:#26303f;                                                /* linee griglia dei grafici/bordi */
+    }
+    * { box-sizing:border-box; }                                /* padding/bordo inclusi nella larghezza */
+    body {
+      margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+      background:var(--bg); color:var(--ink);                   /* tema scuro */
+    }
+    header { padding:20px 16px 8px; max-width:1100px; margin:0 auto; } /* intestazione centrata */
+    h1 { margin:0; font-size:1.4rem; font-weight:600; }
+    .sub { color:var(--muted); font-size:.85rem; margin-top:4px; } /* sottotitolo "ultima lettura" */
+
+    .wrap { max-width:1100px; margin:0 auto; padding:0 16px 40px; } /* contenitore principale centrato */
+
+    /* --- Card dei valori attuali --- */
+    .cards { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin:16px 0 8px; } /* 4 colonne uguali */
+    .card {
+      background:var(--card); border-radius:14px; padding:14px 16px;
+      border-top:3px solid var(--grid);                         /* striscia colorata in alto (vedi sotto) */
+    }
+    .card .lbl { color:var(--muted); font-size:.8rem; }         /* etichetta (es. "Temperatura") */
+    .card .val { font-size:1.7rem; font-weight:700; margin-top:2px; } /* numero grande */
+    .card .unit { font-size:.9rem; color:var(--muted); font-weight:500; } /* unita' di misura */
+    .card.t { border-top-color:var(--temp); }                   /* ogni card prende il suo colore... */
+    .card.h { border-top-color:var(--hum); }
+    .card.p { border-top-color:var(--pres); }
+    .card.l { border-top-color:var(--luce); }
+    @media (max-width:680px){ .cards{ grid-template-columns:repeat(2,1fr);} } /* su schermo stretto: 2 colonne */
+
+    /* --- Selettore intervallo (24h / 7g / ...) --- */
+    .ranges { display:flex; flex-wrap:wrap; gap:8px; margin:18px 0 6px; } /* pulsanti in fila, a capo se serve */
+    .ranges button {
+      background:var(--card); color:var(--ink); border:1px solid var(--grid);
+      border-radius:20px; padding:7px 16px; cursor:pointer; font-size:.9rem; /* aspetto "pillola" */
+    }
+    .ranges button.active { background:var(--ink); color:var(--bg); font-weight:600; border-color:var(--ink); } /* selezionato */
+    /* Campo altitudine: spinto a destra della riga con margin-left:auto */
+    .ranges .alt { margin-left:auto; display:flex; align-items:center; gap:6px; color:var(--muted); font-size:.85rem; }
+    .ranges .alt input {
+      width:64px; background:var(--card); color:var(--ink);
+      border:1px solid var(--grid); border-radius:8px; padding:6px 8px; font-size:.85rem;
+    }
+
+    .status { color:var(--muted); font-size:.8rem; min-height:1.2em; margin:4px 0 12px; } /* riga di stato/errori */
+
+    /* --- Griglia dei 4 grafici --- */
+    .charts { display:grid; grid-template-columns:1fr 1fr; gap:16px; } /* 2x2 su desktop */
+    @media (max-width:680px){ .charts{ grid-template-columns:1fr;} }   /* 1 colonna su mobile */
+    /* min-width:0 indispensabile: senza, una canvas larga (es. dopo il fullscreen)
+       forza la colonna della grid a espandersi e i grafici escono dallo schermo. */
+    .chart-box { background:var(--card); border-radius:14px; padding:14px; cursor:zoom-in; min-width:0; }
+    .chart-box h2 { margin:0 0 8px; font-size:1rem; font-weight:600; }
+    /* overflow:hidden: rete di sicurezza, evita che la canvas "sbordi" il riquadro.
+       Altezza 216px (e non 240) per far spazio alla riga statistiche sotto SENZA
+       cambiare l'altezza totale del riquadro. */
+    .chart-box .cv { position:relative; height:216px; overflow:hidden; } /* area di disegno a altezza fissa */
+    /* Riga min / media / max sotto il grafico (riempita dal JS).
+       justify-content:center + gap tiene le tre voci raggruppate e vicine anche
+       in fullscreen (con space-between si separavano fino ai bordi). */
+    .chart-box .stats {
+      display:flex; justify-content:center; flex-wrap:wrap; gap:6px 22px;
+      margin-top:6px; font-size:.75rem; color:var(--muted);
+    }
+    .chart-box .stats span { white-space:nowrap; }             /* etichetta+valore non vanno mai a capo separati */
+    .chart-box .stats span[data-stat] { cursor:help; }         /* min/max/media sono interattivi all'hover */
+    .chart-box .stats b { color:var(--ink); font-weight:600; margin-left:4px; } /* valore vicino all'etichetta */
+
+    /* --- Grafico a tutta pagina (click per ingrandire / click per tornare) --- */
+    .chart-box.full {
+      position:fixed; inset:0; z-index:1000; margin:0; border-radius:0; /* occupa tutta la finestra, sopra il resto */
+      padding:18px 22px; cursor:zoom-out; display:flex; flex-direction:column;
+    }
+    .chart-box.full .cv { flex:1; height:auto; }                /* in fullscreen la canvas riempie lo spazio */
+    body.has-full { overflow:hidden; }                          /* blocca lo scroll della pagina sotto */
+  </style>
+</head>
+<body>
+  <!-- INTESTAZIONE: titolo + data dell'ultima lettura (riempita dal JS) -->
+  <header>
+    <h1>🌤️ Centralina Meteo</h1>                                 <!-- titolo della pagina -->
+    <div class="sub" id="updated">Caricamento…</div>             <!-- mostrera' data/ora dell'ultima lettura -->
+  </header>
+
+  <div class="wrap">
+    <!-- CARD VALORI ATTUALI: i numeri (id="cur-...") sono riempiti dal JS -->
+    <div class="cards">
+      <div class="card t"><div class="lbl">Temperatura</div><div class="val"><span id="cur-temp">–</span><span class="unit"> °C</span></div></div>
+      <div class="card h"><div class="lbl">Umidità</div><div class="val"><span id="cur-hum">–</span><span class="unit"> %</span></div></div>
+      <div class="card p"><div class="lbl">Pressione</div><div class="val"><span id="cur-pres">–</span><span class="unit"> hPa</span></div></div>
+      <div class="card l"><div class="lbl">Luce</div><div class="val"><span id="cur-luce">–</span><span class="unit"> %</span></div></div>
+    </div>
+
+    <!-- SELETTORE INTERVALLO: l'attributo data-range viene letto dal JS al click.
+         A destra (margin-left:auto sul .alt) il campo altitudine per la linea
+         della pressione normale. -->
+    <div class="ranges" id="ranges">
+      <button data-range="24h" class="active">24 ore</button>
+      <button data-range="7g">7 giorni</button>
+      <button data-range="30g">30 giorni</button>
+      <button data-range="anno">Anno</button>
+      <button data-range="tutto">Tutto</button>
+      <label class="alt" title="Altitudine della centralina: traccia la pressione normale (atmosfera standard) a quella quota">
+        Altitudine <input id="alt" type="number" min="0" max="9000" step="1" placeholder="m"> m
+      </label>
+    </div>
+    <div class="status" id="status"></div>                       <!-- messaggi di stato/errore -->
+
+    <!-- GRIGLIA GRAFICI: ogni <canvas> e' la "tela" su cui Chart.js disegna -->
+    <div class="charts">
+      <div class="chart-box"><h2 style="color:var(--temp)">Temperatura (°C)</h2><div class="cv"><canvas id="ch-temp"></canvas></div><div class="stats" id="st-temp"></div></div>
+      <div class="chart-box"><h2 style="color:var(--hum)">Umidità (%)</h2><div class="cv"><canvas id="ch-hum"></canvas></div><div class="stats" id="st-hum"></div></div>
+      <div class="chart-box"><h2 style="color:var(--pres)">Pressione (hPa)</h2><div class="cv"><canvas id="ch-pres"></canvas></div><div class="stats" id="st-pres"></div></div>
+      <div class="chart-box"><h2 style="color:var(--luce)">Luce (%)</h2><div class="cv"><canvas id="ch-luce"></canvas></div><div class="stats" id="st-luce"></div></div>
+    </div>
+  </div>
+
+  <script>
+    // ENDPOINT: l'URL da cui prendere i dati. Essendo solo "data.php" (relativo),
+    // funziona finche' index.html e data.php stanno nella stessa cartella (/meteo/).
+    const ENDPOINT = 'data.php';
+
+    // Leggiamo i colori del tema dalle variabili CSS, cosi' usiamo le stesse
+    // tinte nei grafici. col('--temp') -> "#ff6b5e".
+    const CSS = getComputedStyle(document.documentElement);      // stili calcolati della pagina (per leggere :root)
+    const col = n => CSS.getPropertyValue(n).trim();             // scorciatoia: dato il nome della variabile, ne ritorna il valore
+    Chart.defaults.color = col('--muted');                       // colore di default di assi/testi
+    Chart.defaults.font.family = 'system-ui, sans-serif';        // font di default dei grafici
+    // Tooltip semi-trasparenti (65% di trasparenza = alpha 0.35) per tutti i grafici.
+    Chart.defaults.plugins.tooltip.backgroundColor = 'rgba(0,0,0,0.35)';
+
+    // Plugin: disegna una linea orizzontale tratteggiata in corrispondenza della
+    // media del periodo. Il valore e' messo dal JS in chart.$avg (e il testo in
+    // chart.$avgText). Si disegna sopra i dati, dentro l'area del grafico.
+    Chart.register({
+      id: 'avgLine',
+      afterDatasetsDraw(chart) {                                 // chiamato dopo che Chart.js ha disegnato i dati
+        const avg = chart.$avg;                                  // valore della media (impostato in showStats)
+        if (avg == null || !chart.$avgShow) return;              // disegna solo al passaggio del mouse su "media"
+        const { ctx, chartArea: { left, right }, scales: { y } } = chart; // contesto di disegno, bordi area, asse Y
+        const yy = y.getPixelForValue(avg);                      // converte il valore in coordinata schermo (pixel)
+        if (yy < chart.chartArea.top || yy > chart.chartArea.bottom) return; // fuori area: non disegna
+        const color = chart.data.datasets[0].borderColor;        // usa il colore del grafico
+        ctx.save();                                              // salva lo stato del contesto (ripristinato a fine)
+        ctx.setLineDash([4, 4]); ctx.lineWidth = 1; ctx.strokeStyle = color; // linea tratteggiata, sottile, colorata
+        ctx.beginPath(); ctx.moveTo(left, yy); ctx.lineTo(right, yy); ctx.stroke(); // traccia da sinistra a destra
+        ctx.setLineDash([]);                                     // ripristina linea continua (per eventuali disegni dopo)
+        ctx.fillStyle = color; ctx.font = '10px system-ui';      // stile testo dell'etichetta
+        ctx.textAlign = 'right'; ctx.textBaseline = 'bottom';    // ancorata in basso a destra della linea
+        ctx.fillText('media ' + chart.$avgText, right - 2, yy - 2); // scrive "media <valore>"
+        ctx.restore();                                           // ripristina lo stato del contesto
+      }
+    });
+
+    // Plugin: linea tenue SEMPRE visibile alla pressione "normale" (atmosfera
+    // standard) per l'altitudine impostata. Il valore e' in chart.$normal; lo
+    // usa solo il grafico della pressione.
+    Chart.register({
+      id: 'normalLine',
+      afterDatasetsDraw(chart) {                                 // disegnato dopo i dati, come avgLine
+        const v = chart.$normal;                                 // pressione normale (impostata in applyAltitude)
+        if (v == null) return;                                   // nessuna altitudine impostata
+        const { ctx, chartArea: { left, right }, scales: { y } } = chart; // contesto, bordi area, asse Y
+        const yy = y.getPixelForValue(v);                        // valore -> coordinata in pixel
+        if (yy < chart.chartArea.top || yy > chart.chartArea.bottom) return; // fuori scala
+        ctx.save();                                              // salva lo stato del contesto
+        ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(255,255,255,0.22)';        // linea bianca molto tenue
+        ctx.beginPath(); ctx.moveTo(left, yy); ctx.lineTo(right, yy); ctx.stroke(); // traccia orizzontale
+        ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.font = '10px system-ui'; // stile dell'etichetta
+        ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';     // ancorata in basso a sinistra della linea
+        ctx.fillText('normale ' + chart.$normalText, left + 2, yy - 2); // scrive "normale <valore>"
+        ctx.restore();                                           // ripristina lo stato del contesto
+      }
+    });
+
+    // Testo nel piede del tooltip in base all'intervallo: nelle viste aggregate
+    // chiarisce che il valore mostrato e' una media, non una lettura puntuale.
+    // (dichiarazione di funzione: e' "hoisted", quindi usabile dentro makeChart)
+    function aggNote() {
+      if (currentRange === '7g' || currentRange === '30g') return 'media oraria';
+      if (currentRange === 'anno' || currentRange === 'tutto') return 'media giornaliera';
+      return 'lettura puntuale';                                 // 24h: dati grezzi al minuto
+    }
+
+    // Crea un grafico a linee (vuoto) su una canvas, con un certo colore.
+    function makeChart(id, color) {
+      return new Chart(document.getElementById(id), {            // crea il grafico sulla canvas con quell'id
+        type: 'line',                                            // grafico a linea
+        data: { datasets: [{
+          data: [],                                              // punti: riempiti dopo, in load()
+          borderColor: color,                                    // colore della linea
+          backgroundColor: color + '22',                        // stesso colore con trasparenza (riempimento)
+          borderWidth: 0.5,                                      // linea sottile
+          pointRadius: 0,                                        // niente pallini sui punti (linea pulita)
+          tension: 0.4, cubicInterpolationMode: 'monotone',      // curva morbida ma senza "ondine" oltre i dati
+          fill: true, spanGaps: true,                            // area sotto la linea; unisce eventuali buchi
+          // Punto evidenziato in hover: bianco con sottile bordo scuro (anello di
+          // contrasto) -> ben visibile su qualsiasi sfondo, senza ingrandirlo.
+          pointHoverRadius: 4,
+          pointHoverBackgroundColor: '#fff',
+          pointHoverBorderColor: col('--bg'),
+          pointHoverBorderWidth: 2,
+          // Stile per SEGMENTO (il tratto di linea tra due punti consecutivi):
+          // se uno dei due estremi e' un valore "riportato" (buco nel DB, vedi
+          // withGapFill), la linea diventa tratteggiata e di colore smorzato,
+          // cosi' si riconosce anche in stampa/bianco e nero (non solo dal colore).
+          // ctx.p0/p1 sono gli estremi del segmento; .raw e' il punto originale
+          // {x,y,filled} che abbiamo passato ai dati del grafico.
+          segment: {
+            borderDash: ctx => (ctx.p0.raw.filled || ctx.p1.raw.filled) ? [5, 4] : undefined,
+            borderColor: ctx => (ctx.p0.raw.filled || ctx.p1.raw.filled) ? 'rgba(255,255,255,0.35)' : undefined,
+          },
+        }]},
+        options: {
+          responsive: true, maintainAspectRatio: false,          // si adatta al contenitore (.cv), altezza libera
+          interaction: { mode: 'index', intersect: false },      // tooltip al passaggio anche senza centrare il punto
+          plugins: {
+            legend: { display: false },                          // niente legenda
+            tooltip: {
+              displayColors: false,                              // tooltip pulito
+              callbacks: {
+                // Nota nel piede del tooltip: nelle viste aggregate avvisa che il
+                // valore e' una media (oraria/giornaliera); su un punto "riportato"
+                // (buco nel DB, vedi withGapFill) avvisa che non e' una lettura
+                // nuova ma l'ultimo valore noto ripetuto.
+                footer: items => items.some(it => it.raw.filled)
+                  ? 'dato non disponibile · ultimo valore noto'
+                  : aggNote(),
+              }
+            }
+          },
+          scales: {
+            x: { type: 'time', grid: { color: col('--grid') },   // asse X = tempo (gestito da luxon)
+                 ticks: { maxRotation: 0, autoSkipPadding: 24 } },// etichette orizzontali, diradate
+            y: { grid: { color: col('--grid') }, ticks: { maxTicksLimit: 6 } } // asse Y, pochi valori per pulizia
+          }
+        }
+      });
+    }
+
+    // I quattro grafici, uno per misura, ognuno col suo colore.
+    const charts = {
+      temp: makeChart('ch-temp', col('--temp')),
+      hum:  makeChart('ch-hum',  col('--hum')),
+      pres: makeChart('ch-pres', col('--pres')),
+      luce: makeChart('ch-luce', col('--luce')),
+    };
+
+    // Come formattare l'asse tempo a seconda dell'intervallo scelto
+    // (su 24h conviene l'ora, su un anno il mese, ecc.).
+    const timeFmt = {
+      '24h':   { unit: 'hour',  fmt: { hour: 'HH:mm' } },
+      '7g':    { unit: 'day',   fmt: { day: 'dd/MM' } },
+      '30g':   { unit: 'day',   fmt: { day: 'dd/MM' } },
+      'anno':  { unit: 'month', fmt: { month: 'MMM' } },
+      'tutto': { unit: 'month', fmt: { month: 'MMM yy' } },
+    };
+
+    // Distanza "normale" (ms) tra due punti consecutivi in ciascun intervallo:
+    // 24h = un minuto (un invio dell'ESP32); 7g/30g = un'ora (bucket data.php);
+    // anno/tutto = un giorno (bucket data.php). Serve per riconoscere i buchi.
+    const stepMs = {
+      '24h': 60 * 1000, '7g': 60 * 60 * 1000, '30g': 60 * 60 * 1000,
+      'anno': 24 * 60 * 60 * 1000, 'tutto': 24 * 60 * 60 * 1000,
+    };
+
+    // Se il DB non ha registrato nulla per un certo periodo (sensore/WiFi giu'),
+    // data.php restituisce semplicemente MENO punti: il grafico, senza aiuto,
+    // disegnerebbe una linea dritta tra il prima e il dopo, come se il valore
+    // fosse cambiato gradualmente (falso). Qui invece "riempiamo" il buco
+    // ripetendo l'ULTIMO valore noto fino a poco prima del prossimo dato reale:
+    // il grafico resta piatto durante l'assenza, ed e' evidente che quel tratto
+    // non è una misura ma un valore riportato (i punti hanno filled:true e nel
+    // rendering avranno uno stile diverso, vedi callback "segment" in makeChart).
+    function withGapFill(points, range) {
+      const step = stepMs[range];
+      if (points.length < 2) return points;
+      const out = [points[0]];
+      for (let i = 1; i < points.length; i++) {
+        const prev = points[i - 1], cur = points[i];
+        const gap = cur.x - prev.x;
+        if (gap > step * 1.5) {                                  // 1.5x = tollera piccoli ritardi di invio
+          // Punto "fantasma": stesso valore dell'ultimo reale, un istante
+          // prima del prossimo dato vero. filled:true lo marca come riportato.
+          out.push({ x: new Date(cur.x.getTime() - 1), y: prev.y, filled: true });
+        }
+        out.push(cur);
+      }
+      return out;
+    }
+
+    // Quanti decimali mostrare per ogni misura nelle statistiche.
+    const decimals = { temp: 1, hum: 1, pres: 1, luce: 0 };
+
+    // Calcola min/media/max di una misura, li scrive sotto il grafico e prepara
+    // i dati per la linea della media e per i tooltip al passaggio del mouse.
+    // ATTENZIONE: riceve l'array GIA' pronto per il grafico (con gli eventuali
+    // punti "riportati" di withGapFill), non i punti grezzi del JSON: cosi'
+    // l'indice di min/maxIdx punta correttamente al punto nel grafico (servito
+    // da applyHover) E i punti filled:true vengono esclusi dal calcolo, senza
+    // sfalsare medie e min/max con valori ripetuti che non sono letture vere.
+    function showStats(key, chartPoints) {
+      const box = document.getElementById('st-' + key);
+      const chart = charts[key];
+      // Scorre i punti tenendo valore E indice di min/max (servono per il tooltip).
+      let min = Infinity, max = -Infinity, minIdx = -1, maxIdx = -1, sum = 0, cnt = 0;
+      chartPoints.forEach((p, i) => {
+        if (p.filled || p.y === null) return;                        // salta buchi e punti riportati
+        const v = p.y;
+        if (v < min) { min = v; minIdx = i; }
+        if (v > max) { max = v; maxIdx = i; }
+        sum += v; cnt++;
+      });
+      if (!cnt) { box.innerHTML = ''; chart.$avg = null; chart.$idx = null; return; } // nessun dato
+      const avg = sum / cnt;                                         // media aritmetica
+      const f = n => n.toFixed(decimals[key]);                       // formattazione coerente
+      // Memorizza sul grafico: la media (per la linea) e gli indici (per i tooltip).
+      chart.$avg = avg; chart.$avgText = f(avg); chart.$idx = { min: minIdx, max: maxIdx };
+      // Ogni voce in uno <span>: etichetta+valore restano uniti; data-stat dice al
+      // gestore del mouse a quale punto puntare.
+      box.innerHTML = '<span data-stat="min">min<b>' + f(min) + '</b></span>' +
+                      '<span data-stat="media">media<b>' + f(avg) + '</b></span>' +
+                      '<span data-stat="max">max<b>' + f(max) + '</b></span>';
+    }
+
+    // Applica lo stato di hover a un grafico in base alla voce sotto il mouse:
+    //  - 'min'/'max': mostra il tooltip nel punto corrispondente
+    //  - 'media': mostra la linea della media
+    //  - null: nessuna evidenziazione (stato normale)
+    function applyHover(key, mode) {
+      const chart = charts[key];
+      if (mode === 'min' || mode === 'max') {
+        const idx = chart.$idx ? chart.$idx[mode] : -1;
+        const el = (idx != null && idx >= 0) ? chart.getDatasetMeta(0).data[idx] : null;
+        if (el) {
+          chart.tooltip.setActiveElements([{ datasetIndex: 0, index: idx }], { x: el.x, y: el.y });
+          chart.setActiveElements([{ datasetIndex: 0, index: idx }]);
+        }
+        chart.$avgShow = false;
+      } else if (mode === 'media') {
+        chart.tooltip.setActiveElements([], {}); chart.setActiveElements([]);
+        chart.$avgShow = true;                                       // accende la linea della media
+      } else {
+        chart.tooltip.setActiveElements([], {}); chart.setActiveElements([]);
+        chart.$avgShow = false;                                      // tutto spento
+      }
+      chart.update();
+    }
+    // Su ogni riga statistiche: l'effetto dipende dalla voce sotto il mouse;
+    // uscendo dalla riga (mouseleave) si torna allo stato normale.
+    for (const k of ['temp', 'hum', 'pres', 'luce']) {
+      const box = document.getElementById('st-' + k);
+      box.addEventListener('mouseover', e => {
+        const s = e.target.closest('span');
+        applyHover(k, s ? s.dataset.stat : null);
+      });
+      box.addEventListener('mouseleave', () => applyHover(k, null));
+    }
+
+    let currentRange = '24h';                                    // intervallo attualmente mostrato
+
+    // Scarica i dati per un intervallo e aggiorna card + grafici.
+    // async/await: "aspetta" la risposta della rete senza bloccare la pagina.
+    async function load(range) {
+      currentRange = range;
+      document.getElementById('status').textContent = 'Aggiornamento…';
+      try {
+        // Chiama data.php?range=...  (cache:'no-store' = sempre dati freschi)
+        const r = await fetch(ENDPOINT + '?range=' + encodeURIComponent(range), { cache: 'no-store' });
+        const j = await r.json();                                // converte la risposta JSON in oggetto JS
+        if (!j.ok) throw new Error(j.err || 'errore');           // il PHP segnala problemi con ok:false
+
+        // Trasforma i punti del JSON nel formato {x: Date, y: valore} di Chart.js.
+        // Il timestamp "YYYY-MM-DD HH:MM:SS" va reso "...THH:MM:SS" per new Date().
+        // filled:false = dato reale dal DB (i buchi vengono aggiunti da withGapFill).
+        const toPt = (p, key) => p.map(row => ({ x: new Date(row.t.replace(' ', 'T')), y: row[key], filled: false }));
+
+        // Aggiorna ciascun grafico con i suoi punti e il formato tempo giusto.
+        let hasGap = false;                                      // true se in QUALCHE grafico c'e' un tratto riportato
+        for (const k of ['temp', 'hum', 'pres', 'luce']) {
+          const arr = withGapFill(toPt(j.points, k), range);      // dati reali + eventuali buchi riempiti
+          if (arr.some(p => p.filled)) hasGap = true;
+          charts[k].data.datasets[0].data = arr;
+          const tf = timeFmt[range];
+          charts[k].options.scales.x.time = { unit: tf.unit, displayFormats: tf.fmt, tooltipFormat: 'dd/MM HH:mm' };
+          showStats(k, arr);                                     // min/media/max (esclude i punti riportati) + indici per il tooltip
+          charts[k].update('none');                              // ridisegna (disegna anche la linea della media)
+        }
+
+        // Aggiorna le card con l'ultima lettura reale e la data in alto.
+        if (j.latest) {
+          document.getElementById('cur-temp').textContent = j.latest.temp.toFixed(1);
+          document.getElementById('cur-hum').textContent  = j.latest.hum.toFixed(1);
+          document.getElementById('cur-pres').textContent = j.latest.pres.toFixed(1);
+          document.getElementById('cur-luce').textContent = j.latest.luce;
+          const d = new Date(j.latest.t.replace(' ', 'T'));
+          document.getElementById('updated').textContent =
+            'Ultima lettura: ' + d.toLocaleString('it-IT');      // data/ora nel formato italiano
+        }
+        document.getElementById('status').textContent =
+          j.count + ' punti · intervallo ' + range +
+          (hasGap ? ' · tratteggio = dato non disponibile (ultimo valore noto)' : ''); // avviso visibile senza hover
+      } catch (e) {
+        // Qualsiasi problema (rete, PHP, DB) finisce qui: lo mostriamo all'utente.
+        document.getElementById('status').textContent = 'Errore nel caricamento: ' + e.message;
+      }
+    }
+
+    // Click sui pulsanti intervallo: evidenzia quello scelto e ricarica i dati.
+    document.getElementById('ranges').addEventListener('click', e => {
+      const b = e.target.closest('button'); if (!b) return;      // ignora click fuori dai pulsanti
+      document.querySelectorAll('#ranges button').forEach(x => x.classList.remove('active'));
+      b.classList.add('active');
+      load(b.dataset.range);                                      // data-range del pulsante
+    });
+
+    // Ridimensiona tutti i grafici DOPO che il browser ha applicato il nuovo
+    // layout. Doppio requestAnimationFrame: il primo lascia ricalcolare il CSS,
+    // il secondo legge le dimensioni ormai corrette (serve in entrata/uscita
+    // dalla modalita' a tutta pagina).
+    function resizeAll() {
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => Object.values(charts).forEach(c => c.resize()))
+      );
+    }
+
+    let savedScroll = 0;                                          // scorrimento salvato prima del fullscreen
+    // Esce dalla modalita' a tutta pagina (se attiva) e ripristina la vista.
+    function exitFull() {
+      const f = document.querySelector('.chart-box.full');
+      if (!f) return false;
+      f.classList.remove('full');
+      document.body.classList.remove('has-full');
+      window.scrollTo(0, savedScroll);                           // torna dov'era la pagina
+      resizeAll();
+      return true;
+    }
+    // Click su un grafico: a tutta pagina; altro click (o Esc): torna indietro.
+    document.querySelector('.charts').addEventListener('click', e => {
+      const box = e.target.closest('.chart-box'); if (!box) return;
+      const wasFull = box.classList.contains('full');
+      if (wasFull) { exitFull(); return; }                       // era gia' pieno -> chiudi
+      savedScroll = window.scrollY;                              // ricorda dov'eri
+      document.querySelectorAll('.chart-box.full').forEach(x => x.classList.remove('full'));
+      box.classList.add('full');                                 // espandi questo
+      document.body.classList.add('has-full');
+      resizeAll();
+    });
+    // Tasto Esc: scorciatoia per uscire dal fullscreen.
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') exitFull(); });
+
+    // --- Altitudine -> pressione normale (linea tenue sul grafico pressione) ---
+    const altInput = document.getElementById('alt');
+    // Pressione attesa (hPa) a quota h secondo l'atmosfera standard ISA.
+    const normalPressure = h => 1013.25 * Math.pow(1 - 2.25577e-5 * h, 5.25588);
+    function applyAltitude() {
+      const raw = altInput.value.trim();
+      const h = parseFloat(raw);
+      const pres = charts.pres;
+      const yopt = pres.options.scales.y;
+      if (raw === '' || isNaN(h)) {                              // nessuna altitudine: niente linea
+        pres.$normal = null;
+        delete yopt.suggestedMin; delete yopt.suggestedMax;
+        localStorage.removeItem('meteoAlt');
+      } else {
+        const v = normalPressure(h);
+        pres.$normal = v; pres.$normalText = v.toFixed(0);
+        // Forza l'asse a includere il valore, cosi' la linea e' sempre visibile
+        // anche se la pressione misurata e' tutta sopra o sotto.
+        yopt.suggestedMin = v; yopt.suggestedMax = v;
+        localStorage.setItem('meteoAlt', String(h));            // ricorda la scelta tra le sessioni
+      }
+      pres.update('none');
+    }
+    const savedAlt = localStorage.getItem('meteoAlt');           // ripristina l'ultima altitudine usata
+    if (savedAlt !== null) altInput.value = savedAlt;
+    altInput.addEventListener('input', applyAltitude);
+    applyAltitude();
+
+    load('24h');                                                 // primo caricamento all'apertura
+    // Auto-refresh ogni minuto (come la cadenza di invio dell'ESP32).
+    setInterval(() => load(currentRange), 60000);
+  </script>
+</body>
+</html>
