@@ -46,8 +46,12 @@ copia `server/secrets.example.php` in `secrets.php`, compila i valori e imposta
 ## Case 3D (`cad/`)
 Case stampabile in due pezzi (`Fronte.stl` + `Retro.stl`, o il progetto già
 affettato `Meteo.3mf`). Profilo **Bambu Lab A1 mini**, PETG, layer 0.2, infill 15%.
-Display e sensore si fissano con **viti M2 × 5 mm**. Modello pubblicato su
-MakerWorld (**CC BY 4.0**); testi del listing in `cad/MAKERWORLD_LISTING.md`.
+Display e sensore si fissano con **viti M2 × 5 mm**.
+
+📥 **Modello 3D su MakerWorld** (CC BY 4.0):
+https://makerworld.com/en/models/3038452-weather-station-case-cyd-esp32-2432s028-bme280
+
+Testi del listing in `cad/MAKERWORLD_LISTING.md`.
 
 ## Roadmap
 - Pilotaggio di **attuatori esterni** (ventilatore, luce) via relè/MOSFET.
