@@ -27,6 +27,9 @@ CLAUDE.local.md
 # --- Backup / snapshot locali (non pubblicati nel repo) ---
 backup/
 
+# --- Note e prompt personali (solo locale) ---
+privato/
+
 # --- Immagine superata (tenuta solo in locale) ---
 immagini/finito_in_funzione_old.jpeg
 
