@@ -76,7 +76,7 @@ da caricare nella stessa cartella di `insert.php`:
 - Sotto ogni grafico riga **min · media · max** del periodo. Hover su `min`/`max`
   apre il tooltip sul punto relativo; hover su `media` mostra una linea
   tratteggiata della media (plugin `avgLine`, visibile solo in hover).
-- Stile grafici (preferenze utente): linea sottile (`borderWidth 0.5`) e curve
+- Stile grafici: linea sottile (`borderWidth 0.5`) e curve
   morbide (`tension 0.4` + `monotone`); tooltip semi-trasparenti
   (`rgba(0,0,0,0.35)`); punto in hover bianco con anello scuro (non ingrandito).
 - Gotcha CSS: i `.chart-box` hanno `min-width:0`, altrimenti la canvas residua
