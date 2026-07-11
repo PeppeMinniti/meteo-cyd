@@ -83,7 +83,7 @@ Consiglio / Tip: stampa il **Fronte** con la faccia dello schermo verso il basso
 - **IT:** il firmware non è incluso nel modello 3D — link al codice qui sotto. **EN:** the firmware is not part of the 3D model — source link below.
 
 **Link (compila / fill in):**
-- GitHub (firmware): `<incolla qui / paste here>`
+- GitHub (firmware): https://github.com/PeppeMinniti/meteo-cyd
 - Dashboard demo: `<es. www.peppeminniti.it/meteo/>`
 - Social: `<Instagram / YouTube / sito>`
 
@@ -125,6 +125,25 @@ Hobby & DIY → Electronics  (oppure / or: Gadgets → Desk)
 - Driving **external actuators** (fan, light) via relay/MOSFET from the same station.
 - **Threshold automations**: auto on/off based on **temperature** and **ambient light** (e.g. fan above a set temperature, light when it gets dark).
 - **Manual touchscreen** control alongside the automatic mode.
+
+---
+
+## Ringraziamenti / Credits
+
+**IT** — Ideazione, progettazione, scelte tecniche, stampa e prove sul campo sono
+di **Giuseppe Minniti**. Parte dello sviluppo (firmware, dashboard, documentazione)
+è stata portata avanti in **collaborazione con un assistente AI (Claude, di
+Anthropic)**, usato come compagno di lavoro. Mi piace pensarla come una
+collaborazione in cui si cresce a vicenda: la direzione, il senso critico e le
+decisioni restano umane, l'AI le affianca e le accelera.
+
+**EN** — Concept, design, engineering choices, printing and field testing are by
+**Giuseppe Minniti**. Part of the development (firmware, dashboard, docs) was
+carried out in **collaboration with an AI assistant (Claude, by Anthropic)**, used
+as a working companion. I like to see it as a partnership where both sides grow:
+direction, judgement and decisions stay human — the AI supports and speeds them up.
+
+Firmware open source: https://github.com/PeppeMinniti/meteo-cyd
 
 ---
 
